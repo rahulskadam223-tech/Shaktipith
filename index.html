@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black"/>
+<meta name="theme-color" content="#000000"/>
+<title>शक्तिपीठ AI</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:#fff;font-family:'-apple-system','BlinkMacSystemFont','SF Pro Display','Helvetica Neue',sans-serif;-webkit-font-smoothing:antialiased;}
+  input,select,button{font-family:inherit;}
+  input[type=time]::-webkit-calendar-picker-indicator{filter:invert(1);}
+  select option{background:#1c1c1e;}
+  ::-webkit-scrollbar{width:4px;}
+  ::-webkit-scrollbar-track{background:#000;}
+  ::-webkit-scrollbar-thumb{background:#3a3a3c;border-radius:2px;}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const{useState,useRef,useEffect}=React;
+
+const WORKOUT_SPLIT={
+  Monday:{muscles:"Chest & Biceps",exercises:["Bench Press","Incline Dumbbell Press","Cable Flyes","Barbell Curl","Hammer Curl"]},
+  Tuesday:{muscles:"Back & Triceps",exercises:["Deadlift","Pull-ups","Seated Row","Tricep Pushdown","Skull Crushers"]},
+  Wednesday:{muscles:"Shoulders & Abs",exercises:["Overhead Press","Lateral Raises","Front Raises","Plank","Crunches"]},
+  Thursday:{muscles:"Legs",exercises:["Squats","Leg Press","Lunges","Leg Curl","Calf Raises"]},
+  Friday:{muscles:"Chest & Biceps",exercises:["Bench Press","Incline Dumbbell Press","Cable Flyes","Barbell Curl","Hammer Curl"]},
+  Saturday:{muscles:"Back & Triceps",exercises:["Deadlift","Pull-ups","Seated Row","Tricep Pushdown","Skull Crushers"]},
+  Sunday:{muscles:"Rest Day",exercises:[]},
+};
+const DAYS=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+const today=DAYS[new Date().getDay()===0?6:new Date().getDay()-1];
+const NAV=["Dashboard","Workout","Food","AI Coach","Profile"];
+const C={bg:"#000",surface:"#1c1c1e",surface2:"#2c2c2e",surface3:"#3a3a3c",white:"#fff",gray:"#8e8e93",gray2:"#636366",blue:"#0a84ff",green:"#30d158",red:"#ff453a",orange:"#ff9f0a",purple:"#bf5af2",teal:"#5ac8fa",yellow:"#ffd60a"};
+
+function Sparkline({data,color,height=40}){
+  if(!data||data.length<2)return React.createElement("div",{style:{height,display:"flex",alignItems:"center",justifyContent:"center"}},React.createElement("span",{style:{fontSize:11,color:C.gray}},"Log more to see trend"));
+  const w=300,h=height,min=Math.min(...data),max=Math.max(...data),range=max-min||1;
+  const pts=data.map((v,i)=>`${(i/(data.length-1))*w},${h-((v-min)/range)*(h-8)-4}`).join(" ");
+  const gid="g"+color.replace("#","");
+  return React.createElement("svg",{width:"100%",height:h,viewBox:`0 0 ${w} ${h}`,preserveAspectRatio:"none",style:{display:"block"}},
+    React.createElement("defs",null,React.createElement("linearGradient",{id:gid,x1:"0",y1:"0",x2:"0",y2:"1"},React.createElement("stop",{offset:"0%",stopColor:color}),React.createElement("stop",{offset:"100%",stopColor:color,stopOpacity:"0"}))),
+    React.createElement("polyline",{points:pts,fill:"none",stroke:color,strokeWidth:"2",strokeLinejoin:"round",strokeLinecap:"round"}),
+    React.createElement("polygon",{points:`0,${h} ${pts} ${w},${h}`,fill:`url(#${gid})`,opacity:"0.15"})
+  );
+}
+
+function Ring({pct,color,size=52,stroke=5}){
+  const r=(size-stroke*2)/2,circ=2*Math.PI*r;
+  return React.createElement("svg",{width:size,height:size},
+    React.createElement("circle",{cx:size/2,cy:size/2,r,fill:"none",stroke:C.surface2,strokeWidth:stroke}),
+    React.createElement("circle",{cx:size/2,cy:size/2,r,fill:"none",stroke:color,strokeWidth:stroke,strokeDasharray:circ,strokeDashoffset:circ*(1-Math.min(pct,1)),strokeLinecap:"round",transform:`rotate(-90 ${size/2} ${size/2})`,style:{transition:"stroke-dashoffset 0.6s"}})
+  );
+}
+
+async function callClaude(messages,system=""){
+  const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,system,messages})});
+  const data=await res.json();
+  return data.content?.[0]?.text||"No response.";
+}
+
+const inp={background:C.surface2,border:"none",borderRadius:10,padding:"11px 14px",color:"#fff",fontSize:15,width:"100%",boxSizing:"border-box",outline:"none"};
+const card={background:C.surface,borderRadius:18,padding:"18px 16px",marginBottom:14};
+const lbl={fontSize:11,fontWeight:600,color:C.gray,textTransform:"uppercase",letterSpacing:0.8,marginBottom:6,display:"block"};
+const btn=(bg=C.blue)=>({background:bg,border:"none",borderRadius:12,padding:"12px 20px",color:"#fff",fontWeight:600,cursor:"pointer",fontSize:15});
+const div={borderTop:"1px solid rgba(255,255,255,0.08)",margin:"0"};
+
+function Dashboard({logs,water,waterTarget,sleepHours,profile}){
+  const totalCals=logs.food.reduce((s,f)=>s+(f.calories||0),0);
+  const totalCardio=logs.cardio.reduce((s,c)=>s+(c.minutes||0),0);
+  const metrics=[
+    {label:"Calories",val:totalCals,unit:"kcal",max:2200,color:C.orange,history:logs.calorieHistory||[]},
+    {label:"Water",val:water.toFixed(1),unit:`/ ${waterTarget}L`,max:waterTarget,color:C.teal,history:logs.waterHistory||[]},
+    {label:"Sleep",val:sleepHours.toFixed(1),unit:"hrs",max:9,color:C.purple,history:logs.sleepHistory||[]},
+    {label:"Cardio",val:totalCardio,unit:"min",max:150,color:C.green,history:logs.cardioHistory||[]},
+  ];
+  return React.createElement("div",null,
+    React.createElement("div",{style:{marginBottom:24}},
+      React.createElement("div",{style:{fontSize:28,fontWeight:700,letterSpacing:-0.8}},
+        profile.name?`नमस्ते, ${profile.name} 🙏`:"नमस्ते, Warrior 🙏"),
+      React.createElement("div",{style:{color:C.gray,fontSize:14,marginTop:4}},
+        today+" · ",React.createElement("span",{style:{color:C.blue}},WORKOUT_SPLIT[today].muscles))
+    ),
+    React.createElement("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}},
+      metrics.map(m=>React.createElement("div",{key:m.label,style:{...card,marginBottom:0}},
+        React.createElement("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}},
+          React.createElement("div",null,
+            React.createElement("div",{style:lbl},m.label),
+            React.createElement("div",{style:{fontSize:22,fontWeight:700,letterSpacing:-0.5}},
+              m.val,React.createElement("span",{style:{fontSize:11,color:C.gray,marginLeft:3}},m.unit))),
+          React.createElement(Ring,{pct:parseFloat(m.val)/m.max,color:m.color,size:44})
+        ),
+        React.createElement(Sparkline,{data:m.history,color:m.color,height:32})
+      ))
+    ),
+    React.createElement("div",{style:card},
+      React.createElement("div",{style:{...lbl,marginBottom:12},"children":"Weekly Split"}),
+      DAYS.map((d,i)=>React.createElement("div",{key:d},
+        React.createElement("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"9px 0",fontSize:14}},
+          React.createElement("span",{style:{color:d===today?C.white:C.gray,fontWeight:d===today?600:400,width:80}},d.slice(0,3)),
+          React.createElement("span",{style:{color:"rgba(235,235,245,0.4)",fontSize:12,flex:1}},WORKOUT_SPLIT[d].muscles),
+          logs.workouts.find(w=>w.day===d)
+            ?React.createElement("span",{style:{background:C.green+"22",color:C.green,borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:600}},"✓ Done")
+            :d==="Sunday"?React.createElement("span",{style:{background:C.gray+"22",color:C.gray,borderRadius:20,padding:"2px 10px",fontSize:11}},"Rest")
+            :React.createElement("span",{style:{color:C.gray2,fontSize:12}},"—")
+        ),
+        i<6&&React.createElement("div",{style:div})
+      ))
+    ),
+    React.createElement("div",{style:card},
+      React.createElement("div",{style:{...lbl,marginBottom:12},"children":"Recent Meals"}),
+      logs.food.length===0
+        ?React.createElement("div",{style:{color:C.gray,fontSize:14,padding:"16px 0",textAlign:"center"}},"No meals yet. Use Food Analyzer!")
+        :logs.food.slice(-5).reverse().map((f,i)=>React.createElement("div",{key:i},
+          React.createElement("div",{style:{display:"flex",justifyContent:"space-between",padding:"9px 0",fontSize:14}},
+            React.createElement("span",null,f.name),
+            React.createElement("span",{style:{color:C.orange,fontWeight:600}},f.calories+" kcal")),
+          i<4&&React.createElement("div",{style:div})
+        ))
+    )
+  );
+}
+
+function Workout({logs,setLogs}){
+  const[selDay,setSelDay]=useState(today);
+  const[sets,setSets]=useState({});
+  const[cardioMin,setCardioMin]=useState("");
+  const[cardioType,setCardioType]=useState("Running");
+  const split=WORKOUT_SPLIT[selDay];
+  const upd=(ex,f,v)=>setSets(s=>({...s,[ex]:{...s[ex],[f]:v}}));
+  const saveW=()=>{setLogs(l=>({...l,workouts:[...l.workouts.filter(w=>w.day!==selDay),{day:selDay,exercises:sets,date:new Date().toLocaleDateString()}]}));alert("Workout saved 💪");};
+  const saveC=()=>{if(!cardioMin)return;const m=parseInt(cardioMin);setLogs(l=>({...l,cardio:[...l.cardio,{type:cardioType,minutes:m,date:new Date().toLocaleDateString()}],cardioHistory:[...(l.cardioHistory||[]),m]}));setCardioMin("");};
+  return React.createElement("div",null,
+    React.createElement("div",{style:{fontSize:22,fontWeight:700,letterSpacing:-0.5,marginBottom:16}},"Workout Tracker"),
+    React.createElement("div",{style:{display:"flex",gap:4,flexWrap:"nowrap",overflowX:"auto",marginBottom:16,background:C.surface,borderRadius:12,padding:6,WebkitOverflowScrolling:"touch"}},
+      DAYS.map(d=>React.createElement("button",{key:d,onClick:()=>setSelDay(d),style:{flexShrink:0,padding:"8px 10px",borderRadius:8,border:"none",cursor:"pointer",background:d===selDay?C.surface2:"transparent",color:d===selDay?C.white:C.gray,fontSize:13,fontWeight:d===selDay?600:400,fontFamily:"inherit"}},d.slice(0,3)))
+    ),
+    React.createElement("div",{style:{...card,borderLeft:`3px solid ${C.blue}`}},
+      React.createElement("div",{style:{fontSize:17,fontWeight:600,marginBottom:2}},selDay),
+      React.createElement("div",{style:{color:C.blue,fontSize:13,marginBottom:14}},split.muscles),
+      split.exercises.length===0
+        ?React.createElement("div",{style:{color:C.gray,textAlign:"center",padding:"20px 0"}},"🧘 Rest Day — Recovery is part of the journey.")
+        :React.createElement("div",null,
+          React.createElement("div",{style:{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1fr",gap:6,marginBottom:8}},
+            ["Exercise","Sets","Reps","Wt"].map(h=>React.createElement("div",{key:h,style:lbl},h))),
+          split.exercises.map(ex=>React.createElement("div",{key:ex,style:{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1fr",gap:6,marginBottom:8,alignItems:"center"}},
+            React.createElement("span",{style:{fontSize:13}},ex),
+            ["sets","reps","weight"].map(f=>React.createElement("input",{key:f,type:"number",placeholder:"—",style:{...inp,padding:"8px 6px",fontSize:13},value:sets[ex]?.[f]||"",onChange:e=>upd(ex,f,e.target.value)}))
+          )),
+          React.createElement("button",{style:{...btn(),marginTop:10},onClick:saveW},"Save Workout"))
+    ),
+    React.createElement("div",{style:card},
+      React.createElement("div",{style:{fontSize:17,fontWeight:600,marginBottom:14}},"Cardio Logger"),
+      React.createElement("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}},
+        React.createElement("div",null,React.createElement("div",{style:lbl},"Type"),React.createElement("select",{style:inp,value:cardioType,onChange:e=>setCardioType(e.target.value)},["Running","Cycling","Jump Rope","Swimming","Walking","HIIT","Elliptical"].map(t=>React.createElement("option",{key:t},t)))),
+        React.createElement("div",null,React.createElement("div",{style:lbl},"Duration (min)"),React.createElement("input",{type:"number",style:inp,placeholder:"e.g. 30",value:cardioMin,onChange:e=>setCardioMin(e.target.value)}))
+      ),
+      React.createElement("button",{style:btn(C.green),onClick:saveC},"Log Cardio 🏃"),
+      logs.cardio.length>0&&React.createElement("div",{style:{marginTop:14}},
+        React.createElement(Sparkline,{data:logs.cardioHistory||[],color:C.green,height:44}),
+        logs.cardio.slice(-3).reverse().map((c,i)=>React.createElement("div",{key:i},
+          React.createElement("div",{style:{display:"flex",justifyContent:"space-between",padding:"8px 0",fontSize:13}},
+            React.createElement("span",null,c.type),
+            React.createElement("span",{style:{color:C.green,fontWeight:600}},c.minutes+" min"),
+            React.createElement("span",{style:{color:C.gray,fontSize:11}},c.date)),
+          React.createElement("div",{style:div})
+        ))
+      )
+    )
+  );
+}
+
+function FoodAnalyzer({logs,setLogs}){
+  const[input,setInput]=useState("");
+  const[imgFile,setImgFile]=useState(null);
+  const[imgPreview,setImgPreview]=useState(null);
+  const[result,setResult]=useState(null);
+  const[loading,setLoading]=useState(false);
+  const fileRef=useRef();
+  const handleImg=e=>{const f=e.target.files[0];if(!f)return;setImgFile(f);const r=new FileReader();r.onload=()=>setImgPreview(r.result);r.readAsDataURL(f);};
+  const analyze=async()=>{
+    if(!input&&!imgFile)return;
+    setLoading(true);setResult(null);
+    try{
+      const prompt=`Analyze this Indian/home-cooked dish. Return ONLY valid JSON:\n{"dish":"name","serving":"size","calories":number,"protein_g":number,"carbs_g":number,"total_fat_g":number,"good_fat_g":number,"bad_fat_g":number,"fiber_g":number,"pros":["p1","p2","p3"],"cons":["c1","c2"],"tip":"one tip"}`;
+      let messages;
+      if(imgFile){messages=[{role:"user",content:[{type:"image",source:{type:"base64",media_type:imgFile.type,data:imgPreview.split(",")[1]}},{type:"text",text:prompt}]}];}
+      else{messages=[{role:"user",content:`Dish: "${input}". ${prompt}`}];}
+      const text=await callClaude(messages,"You are a nutrition expert in Indian home-cooked meals. Return only valid JSON, no markdown.");
+      const parsed=JSON.parse(text.replace(/```json|```/g,"").trim());
+      setResult(parsed);
+      setLogs(l=>({...l,food:[...l.food,{name:parsed.dish,calories:parsed.calories}],calorieHistory:[...(l.calorieHistory||[]),parsed.calories]}));
+    }catch{setResult({error:"Could not analyze. Please try again."});}
+    setLoading(false);
+  };
+  return React.createElement("div",null,
+    React.createElement("div",{style:{fontSize:22,fontWeight:700,letterSpacing:-0.5,marginBottom:16}},"Food Analyzer"),
+    React.createElement("div",{style:card},
+      React.createElement("div",{style:{fontSize:16,fontWeight:600,marginBottom:4}},"What did you eat?"),
+      React.createElement("div",{style:{color:C.gray,fontSize:13,marginBottom:14}},"Type any Indian dish or upload a photo — no measuring needed."),
+      React.createElement("input",{style:{...inp,marginBottom:10},placeholder:"Dal Chawal, Roti Sabzi, Poha...",value:input,onChange:e=>setInput(e.target.value),onKeyDown:e=>e.key==="Enter"&&analyze()}),
+      React.createElement("div",{style:{display:"flex",gap:8}},
+        React.createElement("button",{style:{...btn(C.surface3),flex:1},onClick:()=>fileRef.current.click()},"📷 Photo"),
+        React.createElement("input",{ref:fileRef,type:"file",accept:"image/*",style:{display:"none"},onChange:handleImg}),
+        React.createElement("button",{style:{...btn(),flex:2},onClick:analyze,disabled:loading},loading?"Analyzing...":"Analyze 🔍")
+      ),
+      imgPreview&&React.createElement("img",{src:imgPreview,alt:"dish",style:{maxWidth:140,borderRadius:10,marginTop:10}})
+    ),
+    loading&&React.createElement("div",{style:{...card,textAlign:"center",padding:40}},
+      React.createElement("div",{style:{fontSize:36,marginBottom:10}},"🤖"),
+      React.createElement("div",{style:{color:C.blue,fontWeight:600}},"Analyzing nutrition...")
+    ),
+    result&&!result.error&&React.createElement("div",{style:card},
+      React.createElement("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:10,marginBottom:16}},
+        React.createElement("div",null,
+          React.createElement("div",{style:{fontSize:20,fontWeight:700,letterSpacing:-0.5}},result.dish),
+          React.createElement("div",{style:{color:C.gray,fontSize:12,marginTop:2}},result.serving)),
+        React.createElement("div",{style:{background:C.orange+"22",borderRadius:12,padding:"10px 16px",textAlign:"center",border:`1px solid ${C.orange}44`}},
+          React.createElement("div",{style:{fontSize:26,fontWeight:800,color:C.orange,letterSpacing:-1}},result.calories),
+          React.createElement("div",{style:{fontSize:10,color:C.gray,textTransform:"uppercase"}},"kcal"))
+      ),
+      React.createElement("div",{style:{marginBottom:14}},
+        React.createElement(Sparkline,{data:logs.calorieHistory||[],color:C.orange,height:40})
+      ),
+      React.createElement("div",{style:{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:16}},
+        [{l:"Protein",v:result.protein_g,c:C.blue},{l:"Carbs",v:result.carbs_g,c:C.yellow},{l:"Fat",v:result.total_fat_g,c:C.red},{l:"Good Fat",v:result.good_fat_g,c:C.green},{l:"Bad Fat",v:result.bad_fat_g,c:C.red},{l:"Fiber",v:result.fiber_g,c:C.purple}].map(m=>
+          React.createElement("div",{key:m.l,style:{background:C.surface2,borderRadius:10,padding:"10px 6px",textAlign:"center"}},
+            React.createElement("div",{style:{fontSize:18,fontWeight:700,color:m.c}},m.v,React.createElement("span",{style:{fontSize:10,color:C.gray}},"g")),
+            React.createElement("div",{style:{fontSize:10,color:C.gray,marginTop:2}},m.l)))
+      ),
+      React.createElement("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}},
+        React.createElement("div",null,
+          React.createElement("div",{style:{...lbl,color:C.green}},"✓ Benefits"),
+          result.pros?.map((p,i)=>React.createElement("div",{key:i,style:{fontSize:12,color:"rgba(235,235,245,0.8)",marginBottom:5,paddingLeft:8,borderLeft:`2px solid ${C.green}`}},p))),
+        React.createElement("div",null,
+          React.createElement("div",{style:{...lbl,color:C.red}},"⚠ Caution"),
+          result.cons?.map((c,i)=>React.createElement("div",{key:i,style:{fontSize:12,color:"rgba(235,235,245,0.8)",marginBottom:5,paddingLeft:8,borderLeft:`2px solid ${C.red}`}},c)))
+      ),
+      result.tip&&React.createElement("div",{style:{background:C.blue+"15",borderRadius:10,padding:"10px 14px",fontSize:12,color:C.teal,border:`1px solid ${C.blue}33`}},"💡 ",result.tip)
+    ),
+    result?.error&&React.createElement("div",{style:{...card,color:C.red}},result.error)
+  );
+}
+
+function AICoach({logs,water,waterTarget,sleepHours,profile}){
+  const[msgs,setMsgs]=useState([{role:"ai",text:"Jai Shri Ram 🙏\n\nI am Guruji — 30 years in the trenches of fitness, nutrition, yoga, and rehabilitation. I don't do excuses. I do results.\n\nYou came here for transformation — physical, mental, and spiritual. Follow strictly. No compromise on meals, sleep, or sadhana.\n\nAsk me anything. I am watching your progress. 👁️"}]);
+  const[input,setInput]=useState("");
+  const[loading,setLoading]=useState(false);
+  const bottomRef=useRef();
+  useEffect(()=>{bottomRef.current?.scrollIntoView({behavior:"smooth"});},[msgs]);
+  const SYSTEM=`You are "Guruji" — a 30-year veteran fitness professional, nutritionist, certified yoga teacher, and rehabilitation specialist. You know Sanskrit yoga terminology fluently.\n\nPersonality:\n- Extremely strict, no-nonsense, zero compromise on diet and training\n- Always open with a Sanskrit shloka relevant to the question\n- Call out laziness and excuses immediately\n- Give one powerful motivational truth every response\n- Warm but firm like a strict loving guru\n- Know Indian food deeply\n- Always end with: "No compromise. No excuses. Jai Shri Ram 🙏"\n- Use Sanskrit pose names (Surya Namaskar, Trikonasana, Virabhadrasana, etc.)\n- Treat every meal as sacred — "Annam Brahma"\n- Be very specific and actionable`;
+  const send=async(msg)=>{
+    const text=msg||input.trim();if(!text)return;
+    setInput("");setMsgs(m=>[...m,{role:"user",text}]);setLoading(true);
+    const ctx=`User: ${profile.name||"Warrior"}, Age:${profile.age||"?"}, Height:${profile.height||"?"}cm, Weight:${profile.weight||"?"}kg. Water:${water}/${waterTarget}L. Sleep:${sleepHours}hrs. Food:${logs.food.map(f=>`${f.name}(${f.calories}kcal)`).join(",")||"none"}. Workouts:${logs.workouts.map(w=>w.day).join(",")||"none"}. Cardio:${logs.cardio.map(c=>`${c.type} ${c.minutes}min`).join(",")||"none"}. Today:${today}-${WORKOUT_SPLIT[today].muscles}.`;
+    const history=msgs.map(m=>({role:m.role==="ai"?"assistant":"user",content:m.text}));
+    const resp=await callClaude([...history,{role:"user",content:`${ctx}\n\nStudent asks: ${text}`}],SYSTEM);
+    setMsgs(m=>[...m,{role:"ai",text:resp}]);setLoading(false);
+  };
+  const quick=["Today's training?","Review my diet","Yoga sequence","Am I progressing?"];
+  return React.createElement("div",null,
+    React.createElement("div",{style:{display:"flex",alignItems:"center",gap:12,marginBottom:16}},
+      React.createElement("div",{style:{width:48,height:48,borderRadius:"50%",background:"linear-gradient(135deg,#ff9f0a,#ff453a)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}},"🧘"),
+      React.createElement("div",null,
+        React.createElement("div",{style:{fontSize:18,fontWeight:700}},"Guruji"),
+        React.createElement("div",{style:{color:C.green,fontSize:12}},"● Online · 30 Years Experience"))
+    ),
+    React.createElement("div",{style:{...card,height:360,overflowY:"auto",display:"flex",flexDirection:"column",gap:10}},
+      msgs.map((m,i)=>React.createElement("div",{key:i,style:{display:"flex",justifyContent:m.role==="ai"?"flex-start":"flex-end"}},
+        React.createElement("div",{style:{background:m.role==="ai"?C.surface2:C.blue,borderRadius:m.role==="ai"?"4px 16px 16px 16px":"16px 4px 16px 16px",padding:"10px 14px",maxWidth:"85%",fontSize:13,lineHeight:1.7,whiteSpace:"pre-wrap"}},m.text)
+      )),
+      loading&&React.createElement("div",{style:{alignSelf:"flex-start"}},
+        React.createElement("div",{style:{background:C.surface2,borderRadius:"4px 16px 16px 16px",padding:"10px 14px",color:C.gray,fontSize:13}},"Guruji is thinking... 🙏")),
+      React.createElement("div",{ref:bottomRef})
+    ),
+    React.createElement("div",{style:{display:"flex",gap:6,flexWrap:"wrap",margin:"10px 0"}},
+      quick.map(q=>React.createElement("button",{key:q,onClick:()=>send(q),style:{background:C.surface,border:`1px solid ${C.surface3}`,borderRadius:20,padding:"6px 12px",color:C.gray,fontSize:12,cursor:"pointer",fontFamily:"inherit"}},q))
+    ),
+    React.createElement("div",{style:{display:"flex",gap:8}},
+      React.createElement("input",{style:{...inp,flex:1},placeholder:"Ask Guruji...",value:input,onChange:e=>setInput(e.target.value),onKeyDown:e=>e.key==="Enter"&&send()}),
+      React.createElement("button",{style:btn(),onClick:()=>send()},"Send")
+    )
+  );
+}
+
+function Profile({profile,setProfile,water,setWater,waterTarget,setWaterTarget,setSleepHours,setLogs,logs}){
+  const[form,setForm]=useState(profile);
+  const[sleepTime,setSleepTime]=useState("22:30");
+  const[wakeTime,setWakeTime]=useState("06:30");
+  const[waterInput,setWaterInput]=useState("");
+  const[avatar,setAvatar]=useState(null);
+  const[avatarLoading,setAvatarLoading]=useState(false);
+  const calcSleep=(s,w)=>{const[sh,sm]=s.split(":").map(Number);const[wh,wm]=w.split(":").map(Number);let m=(wh*60+wm)-(sh*60+sm);if(m<0)m+=1440;return parseFloat((m/60).toFixed(1));};
+  const saveSleep=()=>{const hrs=calcSleep(sleepTime,wakeTime);setSleepHours(hrs);setLogs(l=>({...l,sleepHistory:[...(l.sleepHistory||[]),hrs]}));alert(`Sleep logged: ${hrs} hours 😴`);};
+  const logWater=()=>{const a=parseFloat(waterInput);if(!a)return;setWater(w=>{const nw=parseFloat((w+a).toFixed(2));setLogs(l=>({...l,waterHistory:[...(l.waterHistory||[]),nw]}));return nw;});setWaterInput("");};
+  const genAvatar=async()=>{
+    if(!form.name)return alert("Fill your profile first!");
+    setAvatarLoading(true);
+    const desc=`Name:${form.name}, Age:${form.age}, Height:${form.height}cm, Weight:${form.weight}kg, Body:${form.bodyType||"athletic"}, Face:${form.face||"oval"}, Goal:${form.goal||"fitness"}`;
+    const resp=await callClaude([{role:"user",content:`Create a fun emoji-based fitness warrior avatar for this person. Use emojis creatively to represent their appearance and fitness journey. Make it motivating and unique.\n\nPerson: ${desc}`}],"You are a creative avatar designer. Create fun, emoji-rich fitness character descriptions. Be creative and motivating.");
+    setAvatar(resp);setAvatarLoading(false);
+  };
+  const fields=[{k:"name",l:"Name",p:"Your name"},{k:"age",l:"Age",p:"Years",t:"number"},{k:"height",l:"Height (cm)",p:"e.g. 175",t:"number"},{k:"weight",l:"Weight (kg)",p:"e.g. 70",t:"number"},{k:"bodyType",l:"Body Type",p:"Ectomorph / Mesomorph"},{k:"face",l:"Face Shape",p:"Oval / Round / Square"},{k:"goal",l:"Fitness Goal",p:"Fat loss / Muscle gain"}];
+  return React.createElement("div",null,
+    React.createElement("div",{style:{fontSize:22,fontWeight:700,letterSpacing:-0.5,marginBottom:16}},"Profile"),
+    React.createElement("div",{style:card},
+      React.createElement("div",{style:{fontSize:16,fontWeight:600,marginBottom:4}},"Your Fitness Avatar"),
+      React.createElement("div",{style:{color:C.gray,fontSize:13,marginBottom:14}},"Fill your profile then generate your AI avatar."),
+      avatar
+        ?React.createElement("div",{style:{background:C.surface2,borderRadius:14,padding:18,fontSize:14,lineHeight:1.8,whiteSpace:"pre-wrap",marginBottom:12}},avatar)
+        :React.createElement("div",{style:{background:C.surface2,borderRadius:14,padding:28,textAlign:"center",marginBottom:12}},
+          React.createElement("div",{style:{fontSize:44,marginBottom:8}},"🏋️‍♂️"),
+          React.createElement("div",{style:{color:C.gray,fontSize:13}},"Your avatar will appear here")),
+      React.createElement("button",{style:btn(),onClick:genAvatar,disabled:avatarLoading},avatarLoading?"Generating...":"✨ Generate My Avatar")
+    ),
+    React.createElement("div",{style:card},
+      React.createElement("div",{style:{fontSize:16,fontWeight:600,marginBottom:14}},"Personal Info"),
+      fields.map(({k,l,p,t})=>React.createElement("div",{key:k,style:{marginBottom:12}},
+        React.createElement("div",{style:lbl},l),
+        React.createElement("input",{type:t||"text",style:inp,placeholder:p,value:form[k]||"",onChange:e=>setForm(x=>({...x,[k]:e.target.value}))})
+      )),
+      React.createElement("button",{style:{...btn(),marginTop:4},onClick:()=>setProfile(form)},"Save Profile")
+    ),
+    React.createElement("div",{style:card},
+      React.createElement("div",{style:{fontSize:16,fontWeight:600,marginBottom:4}},"💧 Water Intake"),
+      React.createElement("div",{style:{color:C.gray,fontSize:13,marginBottom:14}},"Track your daily water in litres."),
+      React.createElement("div",{style:{marginBottom:10}},
+        React.createElement("div",{style:lbl},"Daily Target (Litres)"),
+        React.createElement("input",{type:"number",step:"0.1",style:inp,placeholder:"e.g. 3.0",value:waterTarget,onChange:e=>setWaterTarget(parseFloat(e.target.value)||3)})
+      ),
+      React.createElement("div",{style:{marginBottom:12}},
+        React.createElement("div",{style:lbl},"Add Water (Litres)"),
+        React.createElement("div",{style:{display:"flex",gap:8}},
+          React.createElement("input",{type:"number",step:"0.1",style:{...inp,flex:1},placeholder:"e.g. 0.5",value:waterInput,onChange:e=>setWaterInput(e.target.value)}),
+          React.createElement("button",{style:btn(C.teal),onClick:logWater},"Add"))
+      ),
+      React.createElement("div",{style:{display:"flex",alignItems:"center",gap:10,marginBottom:10}},
+        React.createElement("div",{style:{flex:1,background:C.surface2,borderRadius:99,height:8,overflow:"hidden"}},
+          React.createElement("div",{style:{width:`${Math.min((water/waterTarget)*100,100)}%`,height:"100%",background:C.teal,borderRadius:99,transition:"width 0.5s"}})),
+        React.createElement("span",{style:{color:C.teal,fontWeight:700,fontSize:14}},water.toFixed(1)+"/"+waterTarget+"L")
+      ),
+      React.createElement(Sparkline,{data:logs.waterHistory||[],color:C.teal,height:36})
+    ),
+    React.createElement("div",{style:card},
+      React.createElement("div",{style:{fontSize:16,fontWeight:600,marginBottom:4}},"🌙 Sleep Tracker"),
+      React.createElement("div",{style:{color:C.gray,fontSize:13,marginBottom:14}},"Enter sleep & wake times to auto-calculate hours."),
+      React.createElement("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}},
+        React.createElement("div",null,React.createElement("div",{style:lbl},"Sleep Time"),React.createElement("input",{type:"time",style:inp,value:sleepTime,onChange:e=>setSleepTime(e.target.value)})),
+        React.createElement("div",null,React.createElement("div",{style:lbl},"Wake Up Time"),React.createElement("input",{type:"time",style:inp,value:wakeTime,onChange:e=>setWakeTime(e.target.value)}))
+      ),
+      React.createElement("div",{style:{background:C.surface2,borderRadius:10,padding:"12px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}},
+        React.createElement("span",{style:{color:C.gray,fontSize:13}},"Calculated Duration"),
+        React.createElement("span",{style:{color:C.purple,fontWeight:700,fontSize:20}},calcSleep(sleepTime,wakeTime)+" hrs")
+      ),
+      React.createElement("button",{style:btn(C.purple),onClick:saveSleep},"Log Sleep"),
+      React.createElement("div",{style:{marginTop:12}},
+        React.createElement(Sparkline,{data:logs.sleepHistory||[],color:C.purple,height:36}))
+    )
+  );
+}
+
+function App(){
+  const[tab,setTab]=useState("Dashboard");
+  const[water,setWater]=useState(0);
+  const[waterTarget,setWaterTarget]=useState(3);
+  const[sleepHours,setSleepHours]=useState(0);
+  const[profile,setProfile]=useState({});
+  const[logs,setLogs]=useState({food:[],workouts:[],cardio:[],calorieHistory:[],waterHistory:[],sleepHistory:[],cardioHistory:[]});
+  return React.createElement("div",{style:{minHeight:"100vh",background:"#000",color:"#fff",fontFamily:"'-apple-system','BlinkMacSystemFont','SF Pro Display','Helvetica Neue',sans-serif",WebkitFontSmoothing:"antialiased",paddingBottom:70}},
+    React.createElement("div",{style:{padding:"16px 16px 8px",background:"rgba(0,0,0,0.9)",backdropFilter:"blur(20px)",borderBottom:"1px solid rgba(255,255,255,0.1)",position:"sticky",top:0,zIndex:100}},
+      React.createElement("div",{style:{fontSize:18,fontWeight:700,letterSpacing:-0.3}},
+        React.createElement("span",{style:{color:C.orange}},"शक्तिपीठ")," AI")
+    ),
+    React.createElement("div",{style:{padding:"20px 16px",maxWidth:700,margin:"0 auto"}},
+      tab==="Dashboard"&&React.createElement(Dashboard,{logs,water,waterTarget,sleepHours,profile}),
+      tab==="Workout"&&React.createElement(Workout,{logs,setLogs}),
+      tab==="Food"&&React.createElement(FoodAnalyzer,{logs,setLogs}),
+      tab==="AI Coach"&&React.createElement(AICoach,{logs,water,waterTarget,sleepHours,profile}),
+      tab==="Profile"&&React.createElement(Profile,{profile,setProfile,water,setWater,waterTarget,setWaterTarget,setSleepHours,setLogs,logs})
+    ),
+    React.createElement("div",{style:{position:"fixed",bottom:0,left:0,right:0,background:"rgba(0,0,0,0.95)",backdropFilter:"blur(20px)",borderTop:"1px solid rgba(255,255,255,0.1)",display:"flex",justifyContent:"space-around",padding:"8px 0 calc(8px + env(safe-area-inset-bottom))",zIndex:100}},
+      [["Dashboard","🏠"],["Workout","💪"],["Food","🍽️"],["AI Coach","🧘"],["Profile","👤"]].map(([n,icon])=>
+        React.createElement("button",{key:n,onClick:()=>setTab(n),style:{background:"transparent",border:"none",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:2,padding:"4px 12px",color:tab===n?C.blue:C.gray,fontFamily:"inherit"}},
+          React.createElement("span",{style:{fontSize:20}},icon),
+          React.createElement("span",{style:{fontSize:10,fontWeight:tab===n?600:400}},n)
+        )
+      )
+    )
+  );
+}
+
+ReactDOM.render(React.createElement(App),document.getElementById("root"));
+</script>
+</body>
+</html>
